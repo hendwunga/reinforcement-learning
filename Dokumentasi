@@ -1,0 +1,61 @@
+Persiapan Python 3.10 di Ubuntu
+
+    Install Python 3.10
+
+    bash
+    sudo add-apt-repository ppa:deadsnakes/ppa
+    sudo apt update
+    sudo apt install python3.10 python3.10-venv python3.10-dev
+
+Membuat Virtual Environment Project
+
+    Buat dan aktifkan virtual environment di root folder project
+
+    bash
+    python3.10 -m venv .venv
+    source .venv/bin/activate
+
+Install Dependencies
+
+    Isi dan install requirements.txt
+
+    Contoh isi requirements.txt minimal:
+
+text
+numpy
+pandas
+matplotlib
+seaborn
+scipy
+scikit-learn
+tqdm
+notebook
+ipykernel
+jupyterlab
+
+Install semua paket:
+
+    bash
+    pip install --upgrade pip
+    pip install -r requirements.txt
+
+Registrasi Kernel Jupyter
+
+    Daftarkan kernel agar muncul di pilihan notebook
+
+    bash
+    python -m ipykernel install --user --name=venv-py310 --display-name="Python (venv-py310)"
+
+Menjalankan Notebook
+
+    Jalankan Jupyter Notebook atau Jupyter Lab
+
+bash
+jupyter notebook
+
+atau
+
+bash
+jupyter lab
+
+Pilih kernel "Python (venv-py310)" saat mulai notebook.

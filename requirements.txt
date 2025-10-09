@@ -1,0 +1,13 @@
+numpy
+pandas
+matplotlib
+scipy
+seaborn
+scikit-learn
+tqdm
+imageio
+ipywidgets
+notebook
+ipykernel
+jupyterlab
+seaborn

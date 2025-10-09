@@ -10,7 +10,13 @@ import imageio
 from matplotlib.patches import Rectangle
 from matplotlib.collections import PatchCollection
 
-plt.style.use("seaborn-dark")
+# plt.style.use("seaborn-dark")
+# print(plt.style.available)
+plt.style.use("fast")
+# plt.style.use("ggplot")          # merah-putih klasik
+# plt.style.use("fivethirtyeight")  # gaya ala 538
+# plt.style.use("bmh")             # gaya data science klasik
+# plt.style.use("tableau-colorblind10")  # keren untuk colorblind-safe plots
 
 import sys
 sys.path.append("../")
@@ -91,52 +97,51 @@ class DeliveryEnvironment(object):
             raise Exception("Method not recognized")
     
 
-    def render(self,return_img = False):
-        
-        fig = plt.figure(figsize=(7,7))
-        ax = fig.add_subplot(111)
-        ax.set_title("Delivery Stops")
+    def render(self, return_img=False):
+        plt.style.use("seaborn-v0_8-darkgrid")
 
-        # Show stops
-        ax.scatter(self.x,self.y,c = "red",s = 50)
+        fig, ax = plt.subplots(figsize=(7, 7))
+        ax.set_title("Delivery Stops", fontsize=14, fontweight='bold')
+        ax.set_facecolor("#f9f9f9")
 
-        # Show START
-        if len(self.stops)>0:
-            xy = self._get_xy(initial = True)
-            xytext = xy[0]+0.1,xy[1]-0.05
-            ax.annotate("START",xy=xy,xytext=xytext,weight = "bold")
+    # Plot stops
+        ax.scatter(self.x, self.y, c="#e74c3c", s=60, label="Stops")
 
-        # Show itinerary
+    # Start marker
+        if self.stops:
+            sx, sy = self._get_xy(initial=True)
+            ax.annotate("START", xy=(sx, sy), xytext=(sx + 0.1, sy - 0.05),
+                    fontweight="bold", color="#2c3e50")
+
+    # Route path
         if len(self.stops) > 1:
-            ax.plot(self.x[self.stops],self.y[self.stops],c = "blue",linewidth=1,linestyle="--")
-            
-            # Annotate END
-            xy = self._get_xy(initial = False)
-            xytext = xy[0]+0.1,xy[1]-0.05
-            ax.annotate("END",xy=xy,xytext=xytext,weight = "bold")
+            ax.plot(self.x[self.stops], self.y[self.stops],
+                c="#2980b9", linewidth=2, linestyle="--")
+            ex, ey = self._get_xy(initial=False)
+            ax.annotate("END", xy=(ex, ey), xytext=(ex + 0.1, ey - 0.05),
+                    fontweight="bold", color="#2c3e50")
 
+    # Traffic box (if any)
+        if hasattr(self, "box"):
+            left, bottom = self.box[0], self.box[2]
+            width, height = self.box[1] - self.box[0], self.box[3] - self.box[2]
+            rect = Rectangle((left, bottom), width, height, facecolor="#e74c3c", alpha=0.2)
+            ax.add_patch(rect)
 
-        if hasattr(self,"box"):
-            left,bottom = self.box[0],self.box[2]
-            width = self.box[1] - self.box[0]
-            height = self.box[3] - self.box[2]
-            rect = Rectangle((left,bottom), width, height)
-            collection = PatchCollection([rect],facecolor = "red",alpha = 0.2)
-            ax.add_collection(collection)
+    # Clean axis
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.legend()
 
-
-        plt.xticks([])
-        plt.yticks([])
-        
         if return_img:
-            # From https://ndres.me/post/matplotlib-animated-gifs-easily/
-            fig.canvas.draw_idle()
-            image = np.frombuffer(fig.canvas.tostring_rgb(), dtype='uint8')
-            image  = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-            plt.close()
+            fig.canvas.draw()
+            image = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
+            image = image.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+            plt.close(fig)
             return image
         else:
             plt.show()
+
 
 
 
