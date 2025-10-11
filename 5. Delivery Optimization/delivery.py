@@ -10,13 +10,7 @@ import imageio
 from matplotlib.patches import Rectangle
 from matplotlib.collections import PatchCollection
 
-# plt.style.use("seaborn-dark")
-# print(plt.style.available)
-plt.style.use("fast")
-# plt.style.use("ggplot")          # merah-putih klasik
-# plt.style.use("fivethirtyeight")  # gaya ala 538
-# plt.style.use("bmh")             # gaya data science klasik
-# plt.style.use("tableau-colorblind10")  # keren untuk colorblind-safe plots
+plt.style.use("seaborn-dark")
 
 import sys
 sys.path.append("../")
@@ -24,351 +18,294 @@ from rl.agents.q_agent import QAgent
 
 
 
-
+# Peta Kota ( Environment )
 class DeliveryEnvironment(object):
-    def __init__(self,n_stops = 10,max_box = 10,method = "distance",**kwargs):
-
+    def __init__(self, n_stops=10, max_box=10, method="distance", **kwargs):
         print(f"Initialized Delivery Environment with {n_stops} random stops")
         print(f"Target metric for optimization is {method}")
 
-        # Initialization
-        self.n_stops = n_stops
-        self.action_space = self.n_stops
-        self.observation_space = self.n_stops
-        self.max_box = max_box
-        self.stops = []
-        self.method = method
+        self.n_stops = n_stops                    # Jumlah titik yang harus dikunjungi
+        self.action_space = self.n_stops          # Banyaknya aksi yang bisa diambil (sama seperti jumlah titik)
+        self.observation_space = self.n_stops     # Banyaknya state (kota/titik yang bisa dikunjungi)
+        self.max_box = max_box                    # Ukuran area kota (misal 10x10)
+        self.stops = []                           # Menyimpan urutan titik yang sudah dikunjungi
+        self.method = method                      # Menentukan mode perhitungan: distance, time, atau traffic_box
 
-        # Generate stops
-        self._generate_constraints(**kwargs)
-        self._generate_stops()
-        self._generate_q_values()
-        self.render()
+        # Generate area dan titik
+        self._generate_constraints(**kwargs)      # Buat zona macet (kalau method=traffic_box)
+        self._generate_stops()                    # Buat titik-titik pengantaran (koordinat acak)
+        self._generate_q_values()                 # Hitung matriks jarak/waktu antar titik
+        self.render()                             # Gambarkan peta kota
 
-        # Initialize first point
-        self.reset()
+        self.reset()                              # Reset posisi awal (mulai dari titik acak)
 
-
-    def _generate_constraints(self,box_size = 0.2,traffic_intensity = 5):
-
+    # -------------------------------------------------------------------------
+    # Bagian untuk membuat kotak zona macet (hanya aktif jika method = traffic_box)
+    # -------------------------------------------------------------------------
+    def _generate_constraints(self, box_size=0.2, traffic_intensity=5):
         if self.method == "traffic_box":
+            # Tentukan posisi acak untuk sisi kiri dan bawah dari kotak macet
+            x_left = np.random.rand() * (self.max_box) * (1 - box_size)
+            y_bottom = np.random.rand() * (self.max_box) * (1 - box_size)
 
-            x_left = np.random.rand() * (self.max_box) * (1-box_size)
-            y_bottom = np.random.rand() * (self.max_box) * (1-box_size)
-
+            # Tentukan sisi kanan dan atas kotak berdasarkan ukuran box_size
             x_right = x_left + np.random.rand() * box_size * self.max_box
             y_top = y_bottom + np.random.rand() * box_size * self.max_box
 
-            self.box = (x_left,x_right,y_bottom,y_top)
-            self.traffic_intensity = traffic_intensity 
+            # Simpan koordinat kotak macet (x kiri, x kanan, y bawah, y atas)
+            self.box = (x_left, x_right, y_bottom, y_top)
+            self.traffic_intensity = traffic_intensity   # Seberapa parah efek macetnya
 
-
-
+    # -------------------------------------------------------------------------
+    # Membuat titik-titik pengantaran secara acak di dalam peta kota
+    # -------------------------------------------------------------------------
     def _generate_stops(self):
-
         if self.method == "traffic_box":
-
+            # Kalau ada zona macet, titik pengantaran diusahakan tidak di dalam kotak macet
             points = []
             while len(points) < self.n_stops:
-                x,y = np.random.rand(2)*self.max_box
-                if not self._is_in_box(x,y,self.box):
-                    points.append((x,y))
-
+                x, y = np.random.rand(2) * self.max_box
+                if not self._is_in_box(x, y, self.box):  # Hindari titik di area macet
+                    points.append((x, y))
             xy = np.array(points)
-
         else:
-            # Generate geographical coordinates
-            xy = np.random.rand(self.n_stops,2)*self.max_box
+            # Kalau bukan mode traffic_box, semua titik acak saja di seluruh area
+            xy = np.random.rand(self.n_stops, 2) * self.max_box
 
-        self.x = xy[:,0]
-        self.y = xy[:,1]
+        # Pisahkan menjadi koordinat X dan Y
+        self.x = xy[:, 0]
+        self.y = xy[:, 1]
 
+    # -------------------------------------------------------------------------
+    # Membuat matriks jarak atau waktu antar titik (Q-value dasar)
+    # -------------------------------------------------------------------------
+    def _generate_q_values(self, box_size=0.2):
+        # Kalau mode distance atau traffic_box, pakai jarak Euclidean
+        if self.method in ["distance", "traffic_box"]:
+            xy = np.column_stack([self.x, self.y])   # Gabungkan x dan y jadi array 2 kolom
+            self.q_stops = cdist(xy, xy)             # Hitung jarak Euclidean antar semua titik
 
-    def _generate_q_values(self,box_size = 0.2):
-
-        # Generate actual Q Values corresponding to time elapsed between two points
-        if self.method in ["distance","traffic_box"]:
-            xy = np.column_stack([self.x,self.y])
-            self.q_stops = cdist(xy,xy)
-        elif self.method=="time":
-            self.q_stops = np.random.rand(self.n_stops,self.n_stops)*self.max_box
-            np.fill_diagonal(self.q_stops,0)
-        else:
-            raise Exception("Method not recognized")
-    
-
-    def render(self, return_img=False):
-        plt.style.use("seaborn-v0_8-darkgrid")
-
-        fig, ax = plt.subplots(figsize=(7, 7))
-        ax.set_title("Delivery Stops", fontsize=14, fontweight='bold')
-        ax.set_facecolor("#f9f9f9")
-
-    # Plot stops
-        ax.scatter(self.x, self.y, c="#e74c3c", s=60, label="Stops")
-
-    # Start marker
-        if self.stops:
-            sx, sy = self._get_xy(initial=True)
-            ax.annotate("START", xy=(sx, sy), xytext=(sx + 0.1, sy - 0.05),
-                    fontweight="bold", color="#2c3e50")
-
-    # Route path
-        if len(self.stops) > 1:
-            ax.plot(self.x[self.stops], self.y[self.stops],
-                c="#2980b9", linewidth=2, linestyle="--")
-            ex, ey = self._get_xy(initial=False)
-            ax.annotate("END", xy=(ex, ey), xytext=(ex + 0.1, ey - 0.05),
-                    fontweight="bold", color="#2c3e50")
-
-    # Traffic box (if any)
-        if hasattr(self, "box"):
-            left, bottom = self.box[0], self.box[2]
-            width, height = self.box[1] - self.box[0], self.box[3] - self.box[2]
-            rect = Rectangle((left, bottom), width, height, facecolor="#e74c3c", alpha=0.2)
-            ax.add_patch(rect)
-
-    # Clean axis
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.legend()
-
-        if return_img:
-            fig.canvas.draw()
-            image = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
-            image = image.reshape(fig.canvas.get_width_height()[::-1] + (4,))
-            plt.close(fig)
-            return image
-        else:
-            plt.show()
-
-
-
-
-    def reset(self):
-
-        # Stops placeholder
-        self.stops = []
-
-        # Random first stop
-        first_stop = np.random.randint(self.n_stops)
-        self.stops.append(first_stop)
-
-        return first_stop
-
-
-    def step(self,destination):
-
-        # Get current state
-        state = self._get_state()
-        new_state = destination
-
-        # Get reward for such a move
-        reward = self._get_reward(state,new_state)
-
-        # Append new_state to stops
-        self.stops.append(destination)
-        done = len(self.stops) == self.n_stops
-
-        return new_state,reward,done
-    
-
-    def _get_state(self):
-        return self.stops[-1]
-
-
-    def _get_xy(self,initial = False):
-        state = self.stops[0] if initial else self._get_state()
-        x = self.x[state]
-        y = self.y[state]
-        return x,y
-
-
-    def _get_reward(self,state,new_state):
-        base_reward = self.q_stops[state,new_state]
-
-        if self.method == "distance":
-            return base_reward
+        # Kalau mode time, buat matriks waktu tempuh acak (simulasi kondisi lalu lintas)
         elif self.method == "time":
-            return base_reward + np.random.randn()
-        elif self.method == "traffic_box":
+            self.q_stops = np.random.rand(self.n_stops, self.n_stops) * self.max_box
+            np.fill_diagonal(self.q_stops, 0)        # Waktu dari titik ke dirinya sendiri = 0
 
-            # Additional reward correspond to slowing down in traffic
-            xs,ys = self.x[state],self.y[state]
-            xe,ye = self.x[new_state],self.y[new_state]
-            intersections = self._calculate_box_intersection(xs,xe,ys,ye,self.box)
+        else:
+            raise Exception("Method not recognized") # Kalau method tidak dikenal, munculkan error
+
+    # -------------------------------------------------------------------------
+    # Hitung nilai reward (biaya perjalanan) antara dua titik
+    # -------------------------------------------------------------------------
+    def _get_reward(self, state, new_state):
+        base_reward = self.q_stops[state, new_state]  # Ambil jarak atau waktu dasar antara dua titik
+
+        # -------------------------- MODE DISTANCE --------------------------
+        if self.method == "distance":
+            return base_reward                         # Reward = jarak antar titik (semakin kecil, semakin baik)
+
+        # -------------------------- MODE TIME ------------------------------
+        elif self.method == "time":
+            # Tambahkan sedikit variasi random (simulasi kecepatan berubah-ubah)
+            return base_reward + np.random.randn()
+
+        # -------------------------- MODE TRAFFIC BOX -----------------------
+        elif self.method == "traffic_box":
+            # Koordinat titik asal dan tujuan
+            xs, ys = self.x[state], self.y[state]
+            xe, ye = self.x[new_state], self.y[new_state]
+
+            # Cek apakah garis perjalanan ini melewati zona macet
+            intersections = self._calculate_box_intersection(xs, xe, ys, ye, self.box)
+
             if len(intersections) > 0:
-                i1,i2 = intersections
-                distance_traffic = np.sqrt((i2[1]-i1[1])**2 + (i2[0]-i1[0])**2)
+                # Jika ada potongan garis di dalam kotak macet
+                i1, i2 = intersections
+
+                # Hitung panjang jalur yang dilalui di dalam zona macet
+                distance_traffic = np.sqrt((i2[1] - i1[1]) ** 2 + (i2[0] - i1[0]) ** 2)
+
+                # Tambahkan penalti berdasarkan panjang jalur dalam kotak dan tingkat kemacetan
                 additional_reward = distance_traffic * self.traffic_intensity * np.random.rand()
             else:
+                # Jika tidak melewati zona macet, tambahkan penalti kecil random
                 additional_reward = np.random.rand()
 
+            # Total reward = jarak dasar + penalti macet
             return base_reward + additional_reward
 
-
-    @staticmethod
-    def _calculate_point(x1,x2,y1,y2,x = None,y = None):
-
-        if y1 == y2:
-            return y1
-        elif x1 == x2:
-            return x1
-        else:
-            a = (y2-y1)/(x2-x1)
-            b = y2 - a * x2
-
-            if x is None:
-                x = (y-b)/a
-                return x
-            elif y is None:
-                y = a*x+b
-                return y
-            else:
-                raise Exception("Provide x or y")
-
-
-    def _is_in_box(self,x,y,box):
-        # Get box coordinates
-        x_left,x_right,y_bottom,y_top = box
+    # -------------------------------------------------------------------------
+    # Fungsi bantu untuk cek apakah titik (x,y) berada di dalam kotak macet
+    # -------------------------------------------------------------------------
+    def _is_in_box(self, x, y, box):
+        x_left, x_right, y_bottom, y_top = box
         return x >= x_left and x <= x_right and y >= y_bottom and y <= y_top
 
+    # -------------------------------------------------------------------------
+    # Hitung titik potong antara garis perjalanan dan kotak macet
+    # -------------------------------------------------------------------------
+    def _calculate_box_intersection(self, x1, x2, y1, y2, box):
+        x_left, x_right, y_bottom, y_top = box   # Ambil batas kotak
 
-    def _calculate_box_intersection(self,x1,x2,y1,y2,box):
+        intersections = []                       # Tempat menyimpan titik potong (jika ada)
 
-        # Get box coordinates
-        x_left,x_right,y_bottom,y_top = box
-
-        # Intersections
-        intersections = []
-
-        # Top intersection
-        i_top = self._calculate_point(x1,x2,y1,y2,y=y_top)
+        # Cek potongan dengan sisi atas kotak
+        i_top = self._calculate_point(x1, x2, y1, y2, y=y_top)
         if i_top > x_left and i_top < x_right:
-            intersections.append((i_top,y_top))
+            intersections.append((i_top, y_top))
 
-        # Bottom intersection
-        i_bottom = self._calculate_point(x1,x2,y1,y2,y=y_bottom)
+        # Cek potongan dengan sisi bawah kotak
+        i_bottom = self._calculate_point(x1, x2, y1, y2, y=y_bottom)
         if i_bottom > x_left and i_bottom < x_right:
-            intersections.append((i_bottom,y_bottom))
+            intersections.append((i_bottom, y_bottom))
 
-        # Left intersection
-        i_left = self._calculate_point(x1,x2,y1,y2,x=x_left)
+        # Cek potongan dengan sisi kiri kotak
+        i_left = self._calculate_point(x1, x2, y1, y2, x=x_left)
         if i_left > y_bottom and i_left < y_top:
-            intersections.append((x_left,i_left))
+            intersections.append((x_left, i_left))
 
-        # Right intersection
-        i_right = self._calculate_point(x1,x2,y1,y2,x=x_right)
+        # Cek potongan dengan sisi kanan kotak
+        i_right = self._calculate_point(x1, x2, y1, y2, x=x_right)
         if i_right > y_bottom and i_right < y_top:
-            intersections.append((x_right,i_right))
+            intersections.append((x_right, i_right))
 
-        return intersections
-
-
+        return intersections                      # Kembalikan daftar titik potong (bisa kosong)
 
 
 
+# ============================================================
+#  FUNGSI UNTUK MENJALANKAN SATU EPISODE PELATIHAN
+# ============================================================
+def run_episode(env, agent, verbose=1):
 
+    s = env.reset()               # Reset environment → mulai dari state awal acak
+    agent.reset_memory()          # Hapus riwayat titik yang pernah dikunjungi
 
-def run_episode(env,agent,verbose = 1):
+    max_step = env.n_stops        # Batas langkah = jumlah titik pengiriman
+    episode_reward = 0            # Total reward yang diperoleh selama episode
+    i = 0                         # Counter langkah
 
-    s = env.reset()
-    agent.reset_memory()
-
-    max_step = env.n_stops
-    
-    episode_reward = 0
-    
-    i = 0
+    # Loop selama episode berjalan
     while i < max_step:
 
-        # Remember the states
+        #  Simpan state yang sedang dikunjungi (untuk menghindari pengulangan)
         agent.remember_state(s)
 
-        # Choose an action
-        a = agent.act(s)
-        
-        # Take the action, and get the reward from environment
-        s_next,r,done = env.step(a)
+        #  Pilih aksi (yaitu titik berikutnya yang akan dikunjungi)
+        a = agent.act(s)  # Menggunakan policy dari Q-table (epsilon-greedy)
 
-        # Tweak the reward
+        #  Lakukan aksi di environment → dapatkan state baru (s_next) dan reward (r)
+        s_next, r, done = env.step(a)
+
+        #  Tweak reward:
+        # Karena reward asli adalah jarak, maka dikalikan -1
+        # → jarak pendek = reward besar (lebih menguntungkan)
+        # → jarak jauh = reward kecil (tidak efisien)
         r = -1 * r
-        
-        if verbose: print(s_next,r,done)
-        
-        # Update our knowledge in the Q-table
-        agent.train(s,a,r,s_next)
-        
-        # Update the caches
-        episode_reward += r
-        s = s_next
-        
-        # If the episode is terminated
-        i += 1
+
+        if verbose: 
+            print(s_next, r, done)  # Tampilkan log jika verbose aktif
+
+        #  Update Q-table dengan pengalaman baru (belajar dari interaksi)
+        agent.train(s, a, r, s_next)
+
+        #  Update variabel internal
+        episode_reward += r         # Tambahkan reward ke total episode
+        s = s_next                  # Pindah ke state berikutnya
+        i += 1                      # Tambahkan langkah
+
+        #  Hentikan episode jika semua titik sudah dikunjungi
         if done:
             break
-            
-    return env,agent,episode_reward
+
+    # Kembalikan hasil episode
+    return env, agent, episode_reward
 
 
 
 
 
 
+# ============================================================
+#  AGENT KHUSUS UNTUK DELIVERY OPTIMIZATION
+# ============================================================
 class DeliveryQAgent(QAgent):
 
-    def __init__(self,*args,**kwargs):
-        super().__init__(*args,**kwargs)
-        self.reset_memory()
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)   # Panggil konstruktor QAgent
+        self.reset_memory()                 # Reset daftar state yang dikunjungi
 
-    def act(self,s):
+    # ============================================================
+    #  Fungsi untuk memilih aksi berikutnya (next stop)
+    # ============================================================
+    def act(self, s):
+        # Ambil salinan Q-value untuk state saat ini
+        q = np.copy(self.Q[s, :])
 
-        # Get Q Vector
-        q = np.copy(self.Q[s,:])
-
-        # Avoid already visited states
+        # Hindari memilih titik yang sudah pernah dikunjungi
+        # dengan memberi nilai -inf agar tidak terpilih lagi
         q[self.states_memory] = -np.inf
 
+        # Gunakan strategi epsilon-greedy:
+        #   - dengan probabilitas (1 - epsilon): pilih aksi terbaik (eksploitasi)
+        #   - dengan probabilitas (epsilon): pilih aksi acak (eksplorasi)
         if np.random.rand() > self.epsilon:
-            a = np.argmax(q)
+            a = np.argmax(q)   # Pilih aksi dengan nilai Q tertinggi
         else:
-            a = np.random.choice([x for x in range(self.actions_size) if x not in self.states_memory])
+            # Pilih acak dari titik-titik yang belum dikunjungi
+            a = np.random.choice(
+                [x for x in range(self.actions_size) if x not in self.states_memory]
+            )
 
-        return a
+        return a   # Kembalikan aksi yang dipilih
 
-
-    def remember_state(self,s):
+    # ============================================================
+    #  Simpan state yang sedang dikunjungi ke dalam memory
+    # ============================================================
+    def remember_state(self, s):
         self.states_memory.append(s)
 
+    # ============================================================
+    #  Reset memory (biasanya dipanggil saat mulai episode baru)
+    # ============================================================
     def reset_memory(self):
         self.states_memory = []
 
 
 
-def run_n_episodes(env,agent,name="training.gif",n_episodes=1000,render_each=10,fps=10):
+# ============================================================
+# 🏋️ FUNGSI UNTUK MENJALANKAN N EPISODE (PELATIHAN)
+# ============================================================
+def run_n_episodes(env, agent, name="training.gif", n_episodes=1000, render_each=10, fps=10):
 
-    # Store the rewards
-    rewards = []
-    imgs = []
+    rewards = []   # Simpan total reward dari setiap episode
+    imgs = []      # Simpan gambar environment (untuk membuat animasi GIF)
 
-    # Experience replay
+    #  Loop latihan sebanyak n_episodes
     for i in tqdm_notebook(range(n_episodes)):
 
-        # Run the episode
-        env,agent,episode_reward = run_episode(env,agent,verbose = 0)
+        # Jalankan satu episode (agent berinteraksi dengan environment)
+        env, agent, episode_reward = run_episode(env, agent, verbose=0)
+
+        # Simpan total reward dari episode ini
         rewards.append(episode_reward)
-        
+
+        # Setiap beberapa episode, render environment jadi gambar
         if i % render_each == 0:
-            img = env.render(return_img = True)
+            img = env.render(return_img=True)
             imgs.append(img)
 
-    # Show rewards
-    plt.figure(figsize = (15,3))
+    # ============================================================
+    #  Tampilkan grafik hasil pelatihan (reward per episode)
+    # ============================================================
+    plt.figure(figsize=(15, 3))
     plt.title("Rewards over training")
     plt.plot(rewards)
     plt.show()
 
-    # Save imgs as gif
-    imageio.mimsave(name,imgs,fps = fps)
+    # ============================================================
+    #  Simpan semua gambar jadi animasi GIF
+    # ============================================================
+    imageio.mimsave(name, imgs, fps=fps)
 
-    return env,agent
+    # Kembalikan environment dan agent yang sudah dilatih
+    return env, agent
